@@ -5,9 +5,31 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 SCRIPT_DIR="$ROOT_DIR/run_scripts"
 
+# Determine action early for logging
+ACTION="${1:-}"
+
 # Source common functions
 # shellcheck source=run_scripts/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+
+# Set up logging to run_logs/ (timestamped + latest per action)
+LOG_DIR="$ROOT_DIR/run_logs"
+mkdir -p "$LOG_DIR"
+ts="$(date +%Y%m%d_%H%M%S)"
+if [[ -n "$ACTION" ]]; then
+  log_base="run_${ACTION}_${ts}.log"
+  latest_base="run_${ACTION}_latest.log"
+else
+  log_base="run_${ts}.log"
+  latest_base="run_latest.log"
+fi
+LOG_FILE="$LOG_DIR/$log_base"
+LATEST_FILE="$LOG_DIR/$latest_base"
+
+# Send all stdout/stderr to both a timestamped log and a rolling latest log
+exec > >(tee "$LOG_FILE" | tee "$LATEST_FILE") 2>&1
+
+log_info "Logging to $LOG_FILE (latest: $LATEST_FILE)"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   log_error "Missing .env. Copy .env.example -> .env and edit values."
@@ -39,6 +61,7 @@ CLUSTER_FULL_NAME="${CLUSTER_NAME_BASE}-${PROJECT_ID}"
 IMAGE_TAG="${IMAGE_TAG:-0.4.0}"
 ECR_REPO_PREFIX="${ECR_REPO_PREFIX:-fridge-stats}"
 INGRESS_NLB="${INGRESS_NLB:-true}"
+ENABLE_CLOUDFRONT="${ENABLE_CLOUDFRONT:-false}"
 
 TEST_WAIT_INTERVAL_SECONDS="${TEST_WAIT_INTERVAL_SECONDS:-30}"
 TEST_TIMEOUT_SECONDS="${TEST_TIMEOUT_SECONDS:-300}"
@@ -130,7 +153,14 @@ cmd_test() {
   configure_kubectl
   
   local base
-  base="${TEST_BASE_URL:-$(get_lb_base_url)}"
+  if [[ "$ENABLE_CLOUDFRONT" == "true" && -z "${TEST_BASE_URL:-}" ]]; then
+    log_step "Using CloudFront URL for smoke tests"
+    local cf_domain
+    cf_domain="$("$SCRIPT_DIR/cloudfront.sh" ensure)"
+    base="https://$cf_domain"
+  else
+    base="${TEST_BASE_URL:-$(get_lb_base_url)}"
+  fi
   if [[ -z "$base" ]]; then
     log_error "Could not auto-detect LoadBalancer hostname."
     log_info "Set TEST_BASE_URL in .env and retry, or check:"
@@ -170,7 +200,6 @@ cmd_down() {
 }
 
 # Main execution
-ACTION="${1:-}"
 case "$ACTION" in
   infra)  cmd_infra ;;
   deploy) cmd_deploy ;;

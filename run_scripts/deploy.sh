@@ -30,6 +30,7 @@ CLUSTER_FULL_NAME="${CLUSTER_NAME_BASE}-${PROJECT_ID}"
 IMAGE_TAG="${IMAGE_TAG:-0.4.0}"
 ECR_REPO_PREFIX="${ECR_REPO_PREFIX:-fridge-stats}"
 INGRESS_NLB="${INGRESS_NLB:-true}"
+ENABLE_CLOUDFRONT="${ENABLE_CLOUDFRONT:-false}"
 
 aws_cmd=(aws)
 if [[ -n "${AWS_PROFILE:-}" ]]; then
@@ -215,7 +216,14 @@ cmd_deploy() {
   apply_manifests
 
   local base
-  base="${TEST_BASE_URL:-$(get_lb_base_url)}"
+  if [[ "$ENABLE_CLOUDFRONT" == "true" ]]; then
+    log_step "Ensuring CloudFront distribution in front of the NLB"
+    local cf_domain
+    cf_domain="$("$SCRIPT_DIR/cloudfront.sh" ensure)"
+    base="https://$cf_domain"
+  else
+    base="${TEST_BASE_URL:-$(get_lb_base_url)}"
+  fi
   if [[ -n "$base" ]]; then
     echo ""
     log_success "Deployment complete!"

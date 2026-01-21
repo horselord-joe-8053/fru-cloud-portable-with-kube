@@ -3,4 +3,5 @@ cursor_gen/
 .env.example
 infra/terraform/.terraform/
 infra/terraform/terraform.tfstate*
+run_logs/
 

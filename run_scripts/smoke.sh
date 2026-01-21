@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/lib.sh"
 BASE_URL="${1:-}"
 if [[ -z "$BASE_URL" ]]; then
   log_error "Usage: $0 <base_url>"
-  log_info "Example: $0 http://a1b2c3d4e5f6g7.elb.amazonaws.com"
+  log_info "Example: $0 https://your-cloudfront-domain.cloudfront.net or http://your-nlb.amazonaws.com"
   exit 1
 fi
 
