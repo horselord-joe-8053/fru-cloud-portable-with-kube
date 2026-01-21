@@ -136,3 +136,38 @@ If you move to GKE/AKS later:
 - your app + ingress rules can stay the same
 - only the cloud-specific “front door” changes.
 
+---
+
+## Optional: CloudFront + HTTPS (and hardening the public edge)
+
+By default, this project exposes the app via an AWS Network Load Balancer (NLB) in front of ingress‑nginx:
+- UI: `http://<nlb-host>/`
+- API: `http://<nlb-host>/api/stats`
+
+You can optionally put **CloudFront in front of the NLB** so that:
+- Users hit **CloudFront over HTTPS**.
+- CloudFront forwards HTTP traffic to the NLB (inside AWS).
+- You get better TLS handling, caching, and an easy place to attach WAF.
+
+How it works here:
+- Set in `.env`:
+  - `ENABLE_CLOUDFRONT=true`
+- When you run:
+  - `./run.sh deploy` or `./run.sh all`
+- The deploy script will:
+  - Look up the ingress‑nginx NLB hostname.
+  - Ensure a CloudFront distribution exists with that NLB as its origin.
+  - Print the CloudFront URL at the end of the deploy.
+  - Use that CloudFront URL for smoke tests by default.
+
+**Locking down the edge:**  
+This repo does **not** try to fully automate AWS WAF configuration, because that’s usually environment‑specific. The intended pattern is:
+- Use this project to create the CloudFront distribution in front of the NLB.
+- Then attach a WAF Web ACL (managed rules, custom rules, IP filters, etc.) to the distribution via:
+  - Terraform in your own IaC layer, or
+  - The AWS Console.
+
+That way:
+- Kubernetes manifests and app code stay portable.
+- The “public edge” hardening (CloudFront + WAF rules) stays in a small, AWS‑specific layer that you can adjust per environment.
+
