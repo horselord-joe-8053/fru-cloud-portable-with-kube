@@ -26,6 +26,11 @@ AWS_REGION="${AWS_REGION:?Set AWS_REGION in .env}"
 CLUSTER_NAME_BASE="${CLUSTER_NAME:?Set CLUSTER_NAME in .env}"
 PROJECT_ID="${PROJECT_ID:?Set PROJECT_ID in .env (unique id to tag resources)}"
 
+# Control where Postgres runs:
+# - USE_POST_DB_IN_KUBE=true  => use StatefulSet Postgres with EBS volumes (requires EBS CSI addon)
+# - USE_POST_DB_IN_KUBE=false => plan to use a managed cloud DB (e.g. Aurora) instead of k8s Postgres
+USE_POST_DB_IN_KUBE="${USE_POST_DB_IN_KUBE:-true}"
+
 aws_cmd=(aws)
 if [[ -n "${AWS_PROFILE:-}" ]]; then
   aws_cmd+=(--profile "$AWS_PROFILE")
@@ -55,6 +60,45 @@ tf_apply() {
   log_success "Infrastructure created/updated"
 }
 
+ensure_ebs_csi_addon() {
+  if [[ "$USE_POST_DB_IN_KUBE" != "true" ]]; then
+    log_info "USE_POST_DB_IN_KUBE is not 'true'; skipping EBS CSI addon installation (expecting external DB such as Aurora)."
+    return 0
+  fi
+
+  log_step "Ensuring AWS EBS CSI driver addon is installed (required for k8s Postgres PVCs)..."
+
+  local cluster_full_name
+  cluster_full_name="${CLUSTER_NAME_BASE}-${PROJECT_ID}"
+
+  # Check if addon already exists
+  local status
+  status="$("${aws_cmd[@]}" eks describe-addon \
+    --cluster-name "$cluster_full_name" \
+    --addon-name aws-ebs-csi-driver \
+    --region "$AWS_REGION" \
+    --query 'addon.status' \
+    --output text 2>/dev/null || echo "NONE")"
+
+  if [[ "$status" == "ACTIVE" || "$status" == "UPDATING" ]]; then
+    log_success "EBS CSI addon already present (status: $status) on cluster $cluster_full_name"
+    return 0
+  fi
+
+  if [[ "$status" == "CREATING" ]]; then
+    log_info "EBS CSI addon is currently being created on cluster $cluster_full_name (status: CREATING)."
+    return 0
+  fi
+
+  log_info "EBS CSI addon not present (status: $status). Creating addon on cluster $cluster_full_name..."
+  fail_fast "${aws_cmd[@]}" eks create-addon \
+    --cluster-name "$cluster_full_name" \
+    --addon-name aws-ebs-csi-driver \
+    --region "$AWS_REGION"
+
+  log_success "EBS CSI addon creation requested. Kubernetes will start provisioning EBS-backed PVCs (gp2)."
+}
+
 tf_destroy() {
   log_step "Destroying Terraform infrastructure..."
   log_warn "This will delete all AWS resources!"
@@ -73,6 +117,7 @@ cmd_infra() {
   log_stage "INFRASTRUCTURE DEPLOYMENT"
   tf_init
   tf_apply
+  ensure_ebs_csi_addon
 }
 
 cmd_destroy() {

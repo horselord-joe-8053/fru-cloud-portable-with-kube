@@ -2,6 +2,10 @@ provider "aws" {
   region = var.region
 }
 
+data "aws_iam_policy" "ebs_csi_driver" {
+  name = "AmazonEBSCSIDriverPolicy"
+}
+
 data "aws_availability_zones" "available" {}
 
 locals {
@@ -74,6 +78,11 @@ module "eks" {
   enable_cluster_creator_admin_permissions = true
 
   tags = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "node_ebs_csi" {
+  role       = "${var.cluster_name}-${var.project_id}-node"
+  policy_arn = data.aws_iam_policy.ebs_csi_driver.arn
 }
 
 output "cluster_name"     { value = module.eks.cluster_name }

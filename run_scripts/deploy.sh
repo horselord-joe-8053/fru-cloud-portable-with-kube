@@ -172,14 +172,15 @@ EOF
   log_success "Manifests applied"
 
   log_step "Waiting for API deployment to be ready"
+  # Allow up to 10 minutes for a fresh cluster to pull images and start pods.
   wait_with_retry "API deployment" \
     "kubectl -n demo rollout status deploy/api --timeout=10s" \
-    30 300
+    30 600
 
   log_step "Waiting for UI deployment to be ready"
   wait_with_retry "UI deployment" \
     "kubectl -n demo rollout status deploy/ui --timeout=10s" \
-    30 300
+    30 600
 
   log_success "All deployments ready"
 }
