@@ -1,0 +1,6 @@
+cursor_gen/
+.env
+.env.example
+infra/terraform/.terraform/
+infra/terraform/terraform.tfstate*
+
