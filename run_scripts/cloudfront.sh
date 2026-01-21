@@ -80,7 +80,11 @@ ensure_cloudfront_distribution() {
     domain="$("${aws_cmd[@]}" cloudfront get-distribution \
       --id "$dist_id" \
       --query "Distribution.DomainName" \
-      --output text)"
+      --output text 2>/dev/null || true)"
+    if [[ -z "$domain" || "$domain" == "None" || "$domain" == "null" ]]; then
+      log_error "Found CloudFront distribution '$dist_id' but could not read DomainName. Please check AWS CloudFront."
+      exit 1
+    fi
     log_success "Reusing existing CloudFront distribution: $domain"
   else
     log_info "No existing CloudFront distribution found for $lb_host. Creating a new one..."
@@ -136,16 +140,17 @@ ensure_cloudfront_distribution() {
 }
 EOF
 
-    local out
-    out="$("${aws_cmd[@]}" cloudfront create-distribution --distribution-config file://"$tmpcfg")"
+    # Create a new distribution and capture only the DomainName for robustness
+    domain="$("${aws_cmd[@]}" cloudfront create-distribution \
+      --distribution-config file://"$tmpcfg" \
+      --query 'Distribution.DomainName' \
+      --output text 2>/dev/null || true)"
     rm -f "$tmpcfg"
 
-    domain="$(python3 <<'PY'
-import json, sys
-data = json.load(sys.stdin)
-print(data["Distribution"]["DomainName"])
-PY
-<<<"$out")"
+    if [[ -z "$domain" || "$domain" == "None" || "$domain" == "null" ]]; then
+      log_error "Failed to create CloudFront distribution for origin '$lb_host'. Please check AWS CloudFront logs/console."
+      exit 1
+    fi
 
     log_success "Created CloudFront distribution: $domain"
   fi

@@ -91,11 +91,14 @@ usage() {
 Usage: ./run.sh <command>
 
 Commands:
-  infra    Create/Update AWS infra with Terraform (VPC + EKS).
-  deploy   Build+push images, install ingress-nginx, apply Kubernetes manifests.
-  test     Run smoke tests against the deployed LoadBalancer endpoint.
-  all      End-to-end: infra + deploy + test.
-  down     Delete k8s resources and terraform destroy infra.
+  infra          Create/Update AWS infra with Terraform (VPC + EKS).
+  deploy         Build+push images, install ingress-nginx, apply Kubernetes manifests.
+  test           Run smoke tests against the deployed LoadBalancer (or CloudFront) endpoint.
+  all            End-to-end: infra + deploy + test.
+  down           Delete k8s resources and terraform destroy infra.
+  down-all       Like 'down', plus clean up AWS artifacts created outside Terraform
+                 (e.g. ECR repositories for this project).
+  all-preempted  Run 'down-all' then 'all' (full reset + fresh deploy), fail-fast.
 
 Notes:
 - All AWS resources are tagged with PROJECT_ID, and the EKS cluster name becomes:
@@ -193,20 +196,76 @@ cmd_down() {
   configure_kubectl || log_warn "kubectl configuration failed, skipping K8s cleanup"
   "$SCRIPT_DIR/deploy.sh" down || log_warn "Kubernetes cleanup had errors"
   
-  # Destroy infrastructure
+  # Destroy infrastructure (Terraform-managed: VPC, EKS, etc.)
   fail_fast "$SCRIPT_DIR/infra.sh" destroy
-  
+
+  # Verify that the EKS cluster is gone (defensive check)
+  log_step "Verifying EKS cluster deletion: $CLUSTER_FULL_NAME"
+  if "${aws_cmd[@]}" eks describe-cluster --name "$CLUSTER_FULL_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+    log_error "EKS cluster '$CLUSTER_FULL_NAME' still exists after destroy. Please inspect AWS manually."
+    exit 1
+  else
+    log_success "EKS cluster '$CLUSTER_FULL_NAME' not found (destroy confirmed)."
+  fi
+
   log_success "Cleanup complete"
+}
+
+cmd_down_all() {
+  log_stage "FULL CLEANUP (INFRA + AWS ARTIFACTS)"
+
+  # First perform the normal down (Kubernetes resources + Terraform infra)
+  cmd_down
+
+  # Then clean up AWS artifacts created outside Terraform that we can safely recreate.
+  log_stage "CLEANING UP AWS ARTIFACTS CREATED BY DEPLOY SCRIPTS"
+
+  # ECR repositories used for this project (images are rebuilt on next deploy)
+  local api_repo="${ECR_REPO_PREFIX}-api"
+  local ui_repo="${ECR_REPO_PREFIX}-ui"
+
+  log_step "Deleting ECR repository (if exists): $api_repo"
+  if "${aws_cmd[@]}" ecr delete-repository --repository-name "$api_repo" --force --region "$AWS_REGION" >/dev/null 2>&1; then
+    log_success "Deleted ECR repo: $api_repo"
+  else
+    if "${aws_cmd[@]}" ecr describe-repositories --repository-names "$api_repo" --region "$AWS_REGION" >/dev/null 2>&1; then
+      log_warn "ECR repo $api_repo still exists. Please check AWS console."
+    else
+      log_info "ECR repo $api_repo not found or already deleted"
+    fi
+  fi
+
+  log_step "Deleting ECR repository (if exists): $ui_repo"
+  if "${aws_cmd[@]}" ecr delete-repository --repository-name "$ui_repo" --force --region "$AWS_REGION" >/dev/null 2>&1; then
+    log_success "Deleted ECR repo: $ui_repo"
+  else
+    if "${aws_cmd[@]}" ecr describe-repositories --repository-names "$ui_repo" --region "$AWS_REGION" >/dev/null 2>&1; then
+      log_warn "ECR repo $ui_repo still exists. Please check AWS console."
+    else
+      log_info "ECR repo $ui_repo not found or already deleted"
+    fi
+  fi
+
+  log_success "AWS artifacts cleaned up (safe to re-run './run.sh all' as if first time)"
+}
+
+cmd_all_preempted() {
+  log_stage "FULL RESET + END-TO-END DEPLOYMENT (DOWN-ALL -> ALL)"
+  # Fail-fast behavior is inherited from the underlying commands via fail_fast()
+  cmd_down_all
+  cmd_all
 }
 
 # Main execution
 case "$ACTION" in
-  infra)  cmd_infra ;;
-  deploy) cmd_deploy ;;
-  test)   cmd_test ;;
-  all)    cmd_all ;;
-  down|destroy) cmd_down ;;
-  -h|--help|"") usage ;;
+  infra)                cmd_infra ;;
+  deploy)               cmd_deploy ;;
+  test)                 cmd_test ;;
+  all)                  cmd_all ;;
+  down|destroy)         cmd_down ;;
+  down-all|destroy-all) cmd_down_all ;;
+  all-preempted)        cmd_all_preempted ;;
+  -h|--help|"")         usage ;;
   *)
     log_error "Unknown command: $ACTION"
     usage
