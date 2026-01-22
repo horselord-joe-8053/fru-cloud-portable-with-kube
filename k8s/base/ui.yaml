@@ -3,9 +3,10 @@ kind: Service
 metadata:
   labels:
     app.kubernetes.io/part-of: fridge-stats
-    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/managed-by: envsubst
+    project-id: "${PROJECT_ID}"
   name: ui
-  namespace: demo
+  namespace: ${NAMESPACE}
 spec:
   ports:
     - port: 80
@@ -18,9 +19,10 @@ kind: Deployment
 metadata:
   labels:
     app.kubernetes.io/part-of: fridge-stats
-    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/managed-by: envsubst
+    project-id: "${PROJECT_ID}"
   name: ui
-  namespace: demo
+  namespace: ${NAMESPACE}
 spec:
   replicas: 1
   selector:
@@ -30,12 +32,13 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/part-of: fridge-stats
-        app.kubernetes.io/managed-by: kustomize
+        app.kubernetes.io/managed-by: envsubst
+        project-id: "${PROJECT_ID}"
         app: ui
     spec:
       containers:
         - name: ui
-          image: REPLACE_WITH_YOUR_REGISTRY/stats-ui:0.4.0
+          image: ${UI_IMAGE}
           ports:
             - containerPort: 80
           readinessProbe:

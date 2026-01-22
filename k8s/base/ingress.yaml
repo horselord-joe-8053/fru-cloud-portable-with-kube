@@ -3,9 +3,10 @@ kind: Ingress
 metadata:
   labels:
     app.kubernetes.io/part-of: fridge-stats
-    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/managed-by: envsubst
+    project-id: "${PROJECT_ID}"
   name: demo
-  namespace: demo
+  namespace: ${NAMESPACE}
 spec:
   ingressClassName: nginx
   rules:

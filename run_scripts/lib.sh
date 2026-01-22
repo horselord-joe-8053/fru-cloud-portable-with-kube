@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Common utility functions for run scripts
 
+# Prevent multiple sourcing
+if [ -n "${_LIB_SH_SOURCED:-}" ]; then
+    return 0
+fi
+export _LIB_SH_SOURCED=1
+
 set -euo pipefail
 
 # Colors for output

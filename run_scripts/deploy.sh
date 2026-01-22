@@ -123,63 +123,56 @@ apply_manifests() {
 
   local api_repo="${ECR_REPO_PREFIX}-api"
   local ui_repo="${ECR_REPO_PREFIX}-ui"
-  local overlay_dir="$ROOT_DIR/k8s/overlays/eks"
-
-  # Backup original kustomization.yaml
-  local backup_file="${overlay_dir}/kustomization.yaml.bak"
-  cp "$overlay_dir/kustomization.yaml" "$backup_file"
-  trap "mv '$backup_file' '$overlay_dir/kustomization.yaml'" EXIT
-
-  log_step "Generating kustomization.yaml with image overrides"
-  cat > "$overlay_dir/kustomization.yaml" <<EOF
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - ../../base
-labels:
-  - pairs:
-      project-id: "$PROJECT_ID"
-      app.kubernetes.io/part-of: "fridge-stats"
-      app.kubernetes.io/managed-by: "kustomize"
-images:
-  - name: REPLACE_WITH_YOUR_REGISTRY/stats-api
-    newName: $REGISTRY/$api_repo
-    newTag: $IMAGE_TAG
-  - name: REPLACE_WITH_YOUR_REGISTRY/stats-ui
-    newName: $REGISTRY/$ui_repo
-    newTag: $IMAGE_TAG
-patchesJson6902:
-  - target:
-      group: apps
-      version: v1
-      kind: StatefulSet
-      name: postgres
-      namespace: demo
-    patch: |-
-      [
-        {"op":"add","path":"/spec/volumeClaimTemplates/0/spec/storageClassName","value":"gp2"}
-      ]
-EOF
-  log_success "kustomization.yaml generated"
-
-  log_step "Applying Kubernetes manifests"
-  fail_fast kubectl apply -k "$overlay_dir"
+  local manifests_dir="$ROOT_DIR/k8s/base"
   
-  # Restore original kustomization.yaml
-  mv "$backup_file" "$overlay_dir/kustomization.yaml"
-  trap - EXIT
+  # Source helper functions
+  local helpers_dir="$ROOT_DIR/run_scripts/helpers"
+  if [ -f "$helpers_dir/kubernetes-manifests.sh" ]; then
+    source "$helpers_dir/kubernetes-manifests.sh"
+  else
+    log_error "kubernetes-manifests.sh not found at $helpers_dir/kubernetes-manifests.sh"
+    return 1
+  fi
+  
+  # Export required environment variables for envsubst
+  export API_IMAGE="${REGISTRY}/${api_repo}:${IMAGE_TAG}"
+  export UI_IMAGE="${REGISTRY}/${ui_repo}:${IMAGE_TAG}"
+  export STORAGE_CLASS="${STORAGE_CLASS:-gp2}"  # Default to gp2 for AWS EKS
+  export PROJECT_ID="${PROJECT_ID:-fridge-stats-demo-001}"
+  export NAMESPACE="${NAMESPACE:-demo}"
+  
+  log_info "Image configuration:"
+  log_info "  API_IMAGE: $API_IMAGE"
+  log_info "  UI_IMAGE: $UI_IMAGE"
+  log_info "  STORAGE_CLASS: $STORAGE_CLASS"
+  log_info "  PROJECT_ID: $PROJECT_ID"
+  log_info "  NAMESPACE: $NAMESPACE"
+  
+  # Generate manifests from templates
+  log_step "Generating Kubernetes manifests from templates"
+  if ! generate_kubernetes_manifests "$manifests_dir"; then
+    log_error "Failed to generate Kubernetes manifests"
+    return 1
+  fi
+  
+  # Apply generated manifests
+  log_step "Applying Kubernetes manifests"
+  if ! apply_kubernetes_manifests "$manifests_dir"; then
+    log_error "Failed to apply Kubernetes manifests"
+    return 1
+  fi
   
   log_success "Manifests applied"
 
   log_step "Waiting for API deployment to be ready"
   # Allow up to 10 minutes for a fresh cluster to pull images and start pods.
   wait_with_retry "API deployment" \
-    "kubectl -n demo rollout status deploy/api --timeout=10s" \
+    "kubectl -n ${NAMESPACE} rollout status deploy/api --timeout=10s" \
     30 600
 
   log_step "Waiting for UI deployment to be ready"
   wait_with_retry "UI deployment" \
-    "kubectl -n demo rollout status deploy/ui --timeout=10s" \
+    "kubectl -n ${NAMESPACE} rollout status deploy/ui --timeout=10s" \
     30 600
 
   log_success "All deployments ready"

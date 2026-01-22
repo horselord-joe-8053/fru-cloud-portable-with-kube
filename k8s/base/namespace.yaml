@@ -3,5 +3,6 @@ kind: Namespace
 metadata:
   labels:
     app.kubernetes.io/part-of: fridge-stats
-    app.kubernetes.io/managed-by: kustomize
-  name: demo
+    app.kubernetes.io/managed-by: envsubst
+    project-id: "${PROJECT_ID}"
+  name: ${NAMESPACE}

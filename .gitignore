@@ -5,3 +5,5 @@ infra/terraform/.terraform/
 infra/terraform/terraform.tfstate*
 run_logs/
 
+k8s/base/generated/
+k8s/base/generated/
