@@ -60,9 +60,50 @@ generate_kubernetes_manifests() {
     log_info "  PROJECT_ID: $PROJECT_ID"
     log_info "  NAMESPACE: $NAMESPACE"
     
-    # No generation needed - manifests will be processed on-the-fly during apply
-    # This matches fru-genai-analytics-all pattern (no generated/ directory)
-    log_success "Manifest generation ready (will process templates during apply)"
+    # Set up directories
+    local templates_dir="$manifests_dir/templates"
+    local generated_dir="$manifests_dir/generated"
+    
+    # Clean up old generated files before generating new ones
+    # This ensures generated/ always reflects the last generation run
+    if [ -d "$generated_dir" ]; then
+        log_info "Cleaning up previous generated manifests..."
+        rm -rf "$generated_dir"
+    fi
+    mkdir -p "$generated_dir"
+    
+    # Process all template files
+    if [ ! -d "$templates_dir" ]; then
+        log_error "Templates directory not found: $templates_dir"
+        return 1
+    fi
+    
+    log_info "Generating manifests from templates..."
+    local generated_count=0
+    
+    for template_file in "$templates_dir"/*.template.yaml; do
+        if [ ! -f "$template_file" ]; then
+            continue
+        fi
+        
+        local basename_file=$(basename "$template_file" .template.yaml)
+        local output_file="$generated_dir/${basename_file}-generated.yaml"
+        
+        if envsubst < "$template_file" > "$output_file" 2>/dev/null; then
+            log_success "  ✓ Generated: ${basename_file}-generated.yaml"
+            ((generated_count++))
+        else
+            log_error "  ✗ Failed to generate: $basename_file"
+            return 1
+        fi
+    done
+    
+    if [ $generated_count -eq 0 ]; then
+        log_error "No templates found in $templates_dir"
+        return 1
+    fi
+    
+    log_success "Generated $generated_count manifest(s) successfully"
     return 0
 }
 
@@ -80,25 +121,52 @@ apply_kubernetes_manifests() {
     
     log_step "Applying Kubernetes manifests"
     
-    # Find all YAML files (exclude kustomization.yaml if it exists)
+    # Find all generated YAML files
+    local generated_dir="$manifests_dir/generated"
     local yaml_files=()
+    
+    if [ ! -d "$generated_dir" ]; then
+        log_error "Generated directory not found: $generated_dir"
+        log_error "Run generate_kubernetes_manifests() first"
+        return 1
+    fi
+    
+    # Collect all YAML files, but prioritize namespace first
+    local namespace_file=""
+    local other_files=()
+    
     while IFS= read -r file; do
-        local basename_file=$(basename "$file")
-        # Skip kustomization.yaml (not a Kubernetes resource)
-        if [[ "$basename_file" == "kustomization.yaml" ]]; then
+        if [ ! -f "$file" ]; then
             continue
         fi
-        yaml_files+=("$file")
-    done < <(find "$manifests_dir" -maxdepth 1 -name "*.yaml" -type f | sort)
+        
+        local basename_file=$(basename "$file")
+        if [[ "$basename_file" == "namespace-generated.yaml" ]]; then
+            namespace_file="$file"
+        else
+            other_files+=("$file")
+        fi
+    done < <(find "$generated_dir" -name "*.yaml" -type f | sort)
+    
+    # Build final array: namespace first, then others
+    local yaml_files=()
+    if [ -n "$namespace_file" ]; then
+        yaml_files+=("$namespace_file")
+    fi
+    yaml_files+=("${other_files[@]}")
     
     if [ ${#yaml_files[@]} -eq 0 ]; then
-        log_error "No YAML files found in $manifests_dir"
+        log_error "No generated YAML files found in $generated_dir"
+        log_error "Run generate_kubernetes_manifests() first"
         return 1
     fi
     
     log_info "Found ${#yaml_files[@]} manifest file(s)"
+    if [ -n "$namespace_file" ]; then
+        log_info "  (Namespace will be applied first)"
+    fi
     
-    # Apply each manifest (process with envsubst on-the-fly)
+    # Apply each generated manifest
     local applied_count=0
     local failed_count=0
     
@@ -106,51 +174,37 @@ apply_kubernetes_manifests() {
         local manifest_name=$(basename "$yaml_file")
         log_info "Applying: $manifest_name"
         
-        # Create temp file for processed manifest (matches fru-genai-analytics-all pattern)
-        local temp_file=$(mktemp)
         local apply_failed=false
         
-        # Process template with envsubst
-        if command -v envsubst >/dev/null 2>&1; then
-            if ! envsubst < "$yaml_file" > "$temp_file" 2>/dev/null; then
-                log_error "  ✗ Failed to process $manifest_name with envsubst"
-                rm -f "$temp_file"
-                ((failed_count++))
-                continue
-            fi
-        else
-            # Fallback: copy as-is (shouldn't happen if generate_kubernetes_manifests was called)
-            cp "$yaml_file" "$temp_file"
-        fi
-        
-        # Apply processed manifest
-        if kubectl apply -f "$temp_file" >/dev/null 2>&1; then
+        # Apply manifest
+        if kubectl apply -f "$yaml_file" >/dev/null 2>&1; then
             log_success "  ✓ Applied: $manifest_name"
             ((applied_count++))
         else
             log_error "  ✗ Failed: $manifest_name"
             # Show error details
-            kubectl apply -f "$temp_file" 2>&1 | head -5 || true
+            kubectl apply -f "$yaml_file" 2>&1 | head -5 || true
             ((failed_count++))
             apply_failed=true
         fi
         
-        # Clean up temp file immediately (matches fru-genai-analytics-all pattern)
-        rm -f "$temp_file"
-        
         # Fail fast if this manifest failed
         if [ "$apply_failed" = "true" ]; then
             log_error "Stopping due to manifest application failure"
+            log_info "Generated files kept in $generated_dir for debugging"
             return 1
         fi
     done
     
     if [ $failed_count -gt 0 ]; then
         log_error "Failed to apply $failed_count manifest(s)"
+        log_info "Generated files kept in $generated_dir for debugging"
         return 1
     fi
     
     log_success "Applied $applied_count manifest(s) successfully"
+    log_info "Generated manifests kept in $generated_dir for reference"
+    
     return 0
 }
 

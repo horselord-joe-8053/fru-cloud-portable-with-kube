@@ -123,8 +123,8 @@ apply_manifests() {
 
   local api_repo="${ECR_REPO_PREFIX}-api"
   local ui_repo="${ECR_REPO_PREFIX}-ui"
-  local manifests_dir="$ROOT_DIR/k8s/base"
-  
+  local manifests_dir="$ROOT_DIR/infra/k8s"
+
   # Source helper functions
   local helpers_dir="$ROOT_DIR/run_scripts/helpers"
   if [ -f "$helpers_dir/kubernetes-manifests.sh" ]; then

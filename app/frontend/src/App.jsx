@@ -2,9 +2,16 @@ import React, { useEffect, useState } from 'react'
 
 function StatCard({ label, value }) {
   return (
-    <div style={{ border:'1px solid #ddd', borderRadius:12, padding:16, minWidth:180 }}>
-      <div style={{ fontSize:12, opacity:.7 }}>{label}</div>
-      <div style={{ fontSize:24, fontWeight:700 }}>{value ?? '—'}</div>
+    <div
+      style={{
+        border: '1px solid #ddd',
+        borderRadius: 12,
+        padding: 10,
+        minWidth: 160,
+      }}
+    >
+      <div style={{ fontSize: 11, opacity: 0.7 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 600 }}>{value ?? '—'}</div>
     </div>
   )
 }
